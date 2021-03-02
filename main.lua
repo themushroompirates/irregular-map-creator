@@ -1,3 +1,5 @@
+require "util.strict"
+
 local Graph = require "graph.graph"
 
 local face_colours = require "colours"
@@ -9,12 +11,8 @@ local VERTEX_SIZE = 12
 
 local graph = Graph()
 
-local vertices = {}
-local edges = {}
-local faces = {}
-
 function love.load()
-	vertices = {
+	local vertices = {
 		{ key = 1, x = 100, y = 100 },
 		{ key = 2, x = 200, y = 100 },
 		{ key = 3, x = 150, y = 200 },
@@ -24,7 +22,7 @@ function love.load()
 		{ key = 7, x = 200, y = 200 },
 		{ key = 8, x = 250, y = 250 }
 	}
-	local tmp_edges =  {
+	local edges =  {
 		{ head = 1, tail = 3 },
 		{ head = 3, tail = 2 },
 		{ head = 2, tail = 1 },
@@ -37,7 +35,7 @@ function love.load()
 		{ head = 5, tail = 2 },
 		{ head = 7, tail = 8 }
 	}
-	graph = Graph(vertices, tmp_edges)
+	graph = Graph(vertices, edges)
 end
 
 function love.keypressed(key)
@@ -49,13 +47,15 @@ function draw_face(face)
 	local coords = {}
 	
 	for i, edge in ipairs(face.path) do
-		coords[2*(i-1)+1] = graph.vertices[edge.head].x
-		coords[2*(i-1)+2] = graph.vertices[edge.head].y
+		local x, y = edge.head:getCoordinates()
+		coords[2*(i-1)+1] = x
+		coords[2*(i-1)+2] = y
 	end
 	
 	local triangles = love.math.triangulate(coords)
 	
-	love.graphics.setColor(face_colours[face.key])
+	local colour = face_colours[face.key]
+	love.graphics.setColor(colour[1], colour[2], colour[3], 0.5)
 	for i, triangle in ipairs(triangles) do
 		love.graphics.polygon("fill", triangle)
 	end
@@ -66,8 +66,7 @@ local function perp(dx, dy)
 end
 
 local function get_edge_coords(edge, offset)
-	local x1, y1 = graph.vertices[edge.head]:getCoordinates()
-	local x2, y2 = graph.vertices[edge.tail]:getCoordinates()
+	local x1, y1, x2, y2 = edge:getCoordinates()
 	
 	local dx, dy = x2 - x1, y2 - y1
 	local length = math.sqrt(dx*dx+dy*dy)
@@ -154,20 +153,14 @@ function love.draw()
 	-- Draw all edges
 	-- Only want every other one so we skip the twins
 	for i = 1, #graph.edges, 2 do
-		local x1, y1, x2, y2 = get_edge_coords(graph.edges[i], 0)
+		local x1, y1, x2, y2 = graph.edges[i]:getCoordinates()
 		love.graphics.line(x1, y1, x2, y2)
-		--[[
-		local p1 = vertices[edges[i].head]
-		local p2 = vertices[edges[i].tail]
-		
-		love.graphics.line(p1.x, p1.y, p2.x, p2.y)
-		--]]
 	end
 	
 	-- Draw all vertices
 	local font = love.graphics.getFont()
 	for i, vertex in ipairs(graph.vertices) do
-		local x, y = vertex.x, vertex.y
+		local x, y = vertex:getCoordinates()
 		local text = tostring(i)
 		local tw, th = font:getWidth(text), font:getHeight()
 		
@@ -220,4 +213,9 @@ function love.draw()
 			love.graphics.print(tostring(edge.face.key), x + 15, y)
 		end
 	end
+	
+	-- Draw temp stuff
+	love.graphics.setColor(main_fg)
+	local foo, bar, baz = graph:checkPoint(love.mouse.getPosition())
+	love.graphics.print(tostring(foo).."\t"..tostring(bar).."\t"..tostring(baz).."\t", 10, love.graphics.getHeight()-10-love.graphics.getFont():getHeight())
 end
