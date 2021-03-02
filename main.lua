@@ -1,3 +1,5 @@
+local Graph = require "graph.graph"
+
 local face_colours = require "colours"
 
 local main_fg = { .8, .9, .95 }
@@ -5,18 +7,11 @@ local main_bg = { 0.1, 0.1, 0.3 }
 
 local VERTEX_SIZE = 12
 
+local graph = Graph()
+
 local vertices = {}
 local edges = {}
 local faces = {}
-
-local adjacency = {}
-
-function adjacency_add(P, Q)
-	if adjacency[P] == nil then
-		adjacency[P] = {}
-	end
-	table.insert(adjacency[P], Q)
-end
 
 function love.load()
 	vertices = {
@@ -42,169 +37,11 @@ function love.load()
 		{ head = 5, tail = 2 },
 		{ head = 7, tail = 8 }
 	}
-	for i, vertex in ipairs(vertices) do
-		vertex.key = i
-		vertex.x, vertex.y = vertex.x * 2 - 150, vertex.y * 2
-	end
-	for i, edge in ipairs(tmp_edges) do
-		table.insert(edges, { head = edge.head, tail = edge.tail })
-		table.insert(edges, { head = edge.tail, tail = edge.head })
-	end
-	for i, edge in ipairs(edges) do
-		edge.key = i
-	end
-	
-	for i, edge in ipairs(edges) do
-		adjacency_add(edge.head, edge.tail)
-	end
-	
-	do_the_thing()
-end
-
-local function angle(x1, y1, x2, y2, x3, y3)
-	x1, y1 = x1 - x2, y1 - y2
-	x3, y3 = x3 - x2, y3 - y2
-	local dot = x1*x3 + y1*y3
-	local det = x1*y3 - y1*x3
-	local result = math.atan2(det, dot)
-	if result < 0 then
-		return math.deg(result) + 360
-	else
-		return math.deg(result)
-	end
-end
-
-local function edge_name(edge)
-	return string.format("[%d-%d]", edge.head, edge.tail)
-end
-
-local function angle_vertices(A, B, C)
-	return angle(
-		vertices[A].x, vertices[A].y,
-		vertices[B].x, vertices[B].y,
-		vertices[C].x, vertices[C].y
-	)
-end
-
-local function is_left_turn(x1, y1, x2, y2, x3, y3)
-	x1, y1 = x1 - x2, y1 - y2
-	x3, y3 = x3 - x2, y3 - y2
-	local det = x1*y3 - y1*x3
-	return det < 0
-end
-
-local function is_left_turn_vertices(A, B, C)
-	return is_left_turn(
-		vertices[A].x, vertices[A].y,
-		vertices[B].x, vertices[B].y,
-		vertices[C].x, vertices[C].y
-	)
-end
-
-function find_next_edge(edge1, allow_concave)
-	local best_angle, best_edge = -math.huge, nil
-	
-	for i, edge2 in ipairs(edges) do
-		if edge2.head == edge1.tail then
-			local tmp_angle = angle_vertices(edge1.head, edge1.tail, edge2.tail)
-			if math.abs(tmp_angle) > best_angle then
-				best_angle = math.abs(tmp_angle)
-				best_edge = edge2
-			end
-		end
-	end
-	
-	return best_edge
-end
-
-function follow_edges()
-	local visited = {}
-	
-	for i, edge in ipairs(edges) do
-		if not visited[i] then
-			print(string.format("Visiting edge %d (%s)", i, edge_name(edge)))
-			visited[i] = true
-			
-			local next_edge = find_next_edge(edge)
-			if next_edge == nil then
-				return
-			end
-			print(string.format("> next edge is %d (%s)", next_edge.key, edge_name(next_edge)))
-			local next_key = next_edge.key
-			edge.next = next_edge
-			
-			local current_key = next_key
-			for sanity = 1, 10 do
-				visited[current_key] = true
-				next_edge = find_next_edge(edges[current_key])
-				if next_edge == nil then
-					return
-				end
-				print(string.format("> next edge is %d (%s)", next_edge.key, edge_name(next_edge)))
-				next_key = next_edge.key
-				edges[current_key].next = next_edge
-				current_key = next_key
-				if current_key == i then
-					print(">> that's a wrap")
-					break
-				end
-			end
-		end
-	end
-end
-
-function get_faces()
-	local visited = {}
-	
-	for i, edge in ipairs(edges) do
-		if not visited[i] then
-			visited[i] = true
-			local signedArea = 0
-			local path = {}
-			local current_edge = edge
-			repeat
-				visited[current_edge.key] = true
-				local x1, y1 = vertices[current_edge.head].x, vertices[current_edge.head].y
-				local x2, y2 = vertices[current_edge.tail].x, vertices[current_edge.tail].y
-				table.insert(path, current_edge)
-				signedArea = signedArea + (x1*y2 - x2*y1)
-				current_edge = current_edge.next
-			until current_edge == edge
-			
-			if signedArea > 0 then
-				print("Found face with area " .. tostring(signedArea))
-				print("Edges : " .. tostring(#path))
-				local face = { path = path, key = 1 + #faces }
-				table.insert(faces, face)
-				for _, tmp_edge in ipairs(path) do
-					tmp_edge.face = face
-				end
-			end
-		end
-	end
-	
-end
-
-function check_tagged_edges()
-	for i, edge in ipairs(edges) do
-		if edge.next then
-			assert(edge.tail == edge.next.head)
-		end
-	end
-end
-
-function do_the_thing()
-
+	graph = Graph(vertices, tmp_edges)
 end
 
 function love.keypressed(key)
-	print("Tagging edges")
-	follow_edges()
-	check_tagged_edges()
-	print("Getting faces")
-	get_faces()
-	print("done")
-	return
+	graph:recalculate()
 end
 
 function draw_face(face)
@@ -212,8 +49,8 @@ function draw_face(face)
 	local coords = {}
 	
 	for i, edge in ipairs(face.path) do
-		coords[2*(i-1)+1] = vertices[edge.head].x
-		coords[2*(i-1)+2] = vertices[edge.head].y
+		coords[2*(i-1)+1] = graph.vertices[edge.head].x
+		coords[2*(i-1)+2] = graph.vertices[edge.head].y
 	end
 	
 	local triangles = love.math.triangulate(coords)
@@ -229,8 +66,8 @@ local function perp(dx, dy)
 end
 
 local function get_edge_coords(edge, offset)
-	local x1, y1 = vertices[edge.head].x, vertices[edge.head].y
-	local x2, y2 = vertices[edge.tail].x, vertices[edge.tail].y
+	local x1, y1 = graph.vertices[edge.head]:getCoordinates()
+	local x2, y2 = graph.vertices[edge.tail]:getCoordinates()
 	
 	local dx, dy = x2 - x1, y2 - y1
 	local length = math.sqrt(dx*dx+dy*dy)
@@ -310,14 +147,14 @@ end
 function love.draw()
 	love.graphics.clear(main_bg)
 	-- Draw all faces
-	for i, face in ipairs(faces) do
+	for i, face in ipairs(graph.faces) do
 		draw_face(face)
 	end
 	love.graphics.setColor(main_fg)
 	-- Draw all edges
 	-- Only want every other one so we skip the twins
-	for i = 1, #edges, 2 do
-		local x1, y1, x2, y2 = get_edge_coords(edges[i], 0)
+	for i = 1, #graph.edges, 2 do
+		local x1, y1, x2, y2 = get_edge_coords(graph.edges[i], 0)
 		love.graphics.line(x1, y1, x2, y2)
 		--[[
 		local p1 = vertices[edges[i].head]
@@ -329,7 +166,7 @@ function love.draw()
 	
 	-- Draw all vertices
 	local font = love.graphics.getFont()
-	for i, vertex in ipairs(vertices) do
+	for i, vertex in ipairs(graph.vertices) do
 		local x, y = vertex.x, vertex.y
 		local text = tostring(i)
 		local tw, th = font:getWidth(text), font:getHeight()
@@ -353,7 +190,7 @@ function love.draw()
 	
 	-- testing
 	--draw_linked_edge(edges[1], edges[7])
-	for i, edge in ipairs(edges) do
+	for i, edge in ipairs(graph.edges) do
 		if edge.next then
 			love.graphics.setColor(face_colours[i])
 			draw_linked_edge(edge, i%2==0, .35 + .1 * (i%2))
@@ -362,10 +199,10 @@ function love.draw()
 	
 	-- Draw edges/faces data
 	love.graphics.setColor(main_fg)
-	for i, edge in ipairs(edges) do
+	for i, edge in ipairs(graph.edges) do
 		local x = love.graphics.getWidth() - 200
 		local y = 10 + (i-1)*20
-		love.graphics.print(edge_name(edge), love.graphics.getWidth() - 200, y)
+		love.graphics.print(tostring(edge), love.graphics.getWidth() - 200, y)
 		
 		x = x + 100
 		
