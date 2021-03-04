@@ -1,6 +1,7 @@
 require "util.strict"
 
 local Graph = require "graph.graph"
+local QuadTree = require "util.qtree"
 
 local face_colours = require "colours"
 
@@ -8,13 +9,13 @@ local main_fg = { .8, .9, .95 }
 local main_bg = { 0.1, 0.1, 0.3 }
 
 local bg = love.graphics.newImage("robin-hood-map.jpg")
-local bg_opacity = 1.0
+local bg_opacity = 0.75
 
 local VERTEX_SIZE = 12
 
 local graph = Graph()
-graph.vertex_tolerance = VERTEX_SIZE
-graph.edge_tolerance = VERTEX_SIZE/2
+Graph.vertex_tolerance = VERTEX_SIZE
+Graph.edge_tolerance = VERTEX_SIZE/2
 
 local camera = love.math.newTransform()
 
@@ -168,6 +169,10 @@ function draw_selection()
 	
 	local foo, bar, baz = graph:checkPoint(mouseX, mouseY)
 	
+	if foo == "face" then
+		draw_face(bar)
+	end
+	
 	local target_x, target_y
 	if foo == "vertex" then
 		target_x, target_y = bar:getCoordinates()
@@ -216,7 +221,7 @@ function draw_selection()
 		love.graphics.line(x_screen, y_screen, target_x_screen, target_y_screen)
 	end
 	
-	love.graphics.setColor(main_fg)
+	love.graphics.setColor(1, 1, 1)
 	love.graphics.print(tostring(foo).."\t"..tostring(bar).."\t"..tostring(baz).."\t", 10, love.graphics.getHeight()-10-love.graphics.getFont():getHeight())
 	love.graphics.print(extra_info, 10, love.graphics.getHeight()-30-love.graphics.getFont():getHeight())
 end
@@ -253,9 +258,12 @@ function love.draw()
 	else
 	
 	-- Draw all faces
+	--[[
 	for i, face in ipairs(graph.faces) do
 		draw_face(face)
 	end
+	--]]
+	
 	
 	local scale = camera:getMatrix()
 	local show_vertices = scale >= 1.0
@@ -302,6 +310,11 @@ function love.draw()
 			love.graphics.circle("fill", x, y, 3)
 		end
 	end
+	
+	love.graphics.setColor(1, 1, 1)
+	love.graphics.print(string.format("Edges queried    : %s / %s", graph.edges_queried   , graph.edges_considered   ), 10, 10)
+	love.graphics.print(string.format("Vertices queried : %s / %s", graph.vertices_queried, graph.vertices_considered), 10, 30)
+	love.graphics.print(string.format("Faces queried    : %s / %s", graph.faces_queried   , graph.faces_considered   ), 10, 50)
 	
 	--[[
 	for i, edge in ipairs(edges) do
@@ -351,6 +364,21 @@ function love.draw()
 		draw_selection()
 	end
 	
+	end
+	
+	if love.keyboard.isDown("1") then
+		love.graphics.setColor(.5, 0, 1)
+		graph.vertexQ:debugDraw(camera)
+	end
+	
+	if love.keyboard.isDown("2") then
+		love.graphics.setColor(0, 0, 1)
+		graph.edgeQ:debugDraw(camera)
+	end
+	
+	if love.keyboard.isDown("3") then
+		love.graphics.setColor(0, 0, 1)
+		graph.faceQ:debugDraw(camera)
 	end
 end
 
@@ -512,6 +540,13 @@ function love.keypressed(key)
 		print(string.format("V-E+F = %d", #graph.vertices - #graph.edges/2 + #graph.faces))
 		--graph:debugPaths()
 	end
+	
+	if key == "return" then
+		print("Edge tree:")
+		graph.edgeQ:debugText()
+		print("Vertex tree:")
+		graph.vertexQ:debugText()
+	end
 end
 
 function save_graph()
@@ -526,5 +561,37 @@ function load_graph()
 		graph:unserialize(data)
 	else
 		print("Failed to load data")
+	end
+end
+
+function test_qtree()
+
+	-- Get min and max of all vertices
+	local xMin, xMax, yMin, yMax = math.huge, -math.huge, math.huge, -math.huge
+	for i, vertex in ipairs(graph.vertices) do
+		local x, y = vertex:getCoordinates()
+		xMin = math.min(x, xMin)
+		yMin = math.min(y, yMin)
+		xMax = math.max(x, xMax)
+		yMax = math.max(y, yMax)
+	end
+
+	local qtree = QuadTree(xMin, yMin, xMax, yMax)
+	
+	for i, edge in ipairs(graph.edges) do
+		local x1, y1, x2, y2 = edge:getCoordinates()
+		qtree:insert(edge, x1, y1, x2, y2)
+	end
+	
+	qtree:debugText()
+	
+	local x, y = love.mouse.getPosition()
+	x, y = camera:inverseTransformPoint(x, y)
+	
+	local results = qtree:queryPoint(x, y)
+	
+	print(#results .. " results")
+	for i, result in ipairs(results) do
+		print(i, tostring(result))
 	end
 end

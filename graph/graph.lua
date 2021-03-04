@@ -4,6 +4,8 @@ local serpent = require "util.serpent"
 local geometry2d = require "util.geometry2d"
 local angle = geometry2d.angle
 
+local QuadTree = require "util.qtree"
+
 local Vertex = require "graph.vertex"
 local Edge = require "graph.edge"
 local Face = require "graph.face"
@@ -15,8 +17,12 @@ local Graph = class("Graph", {
 	edges = {},
 	faces = {},
 	
+	edgeQ = nil,
+	vertexQ = nil,
+	faceQ = nil,
+	
 	-- Hit testing distance
-	vertex_tolerance = 5,
+	vertex_tolerance = 12,
 	edge_tolerance = 3
 })
 
@@ -51,6 +57,81 @@ function Graph:init(vertices, edges)
 	end
 	
 	self:recalculate()
+	self:initEdgeQ()
+	self:initVertexQ()
+	self:initFaceQ()
+end
+
+function Graph:getExtent()
+	-- Get min and max of all vertices
+	local xMin, yMin, xMax, yMax = math.huge, math.huge, -math.huge, -math.huge
+	for i, vertex in ipairs(self.vertices) do
+		local x, y = vertex:getCoordinates()
+		xMin = math.min(x, xMin)
+		yMin = math.min(y, yMin)
+		xMax = math.max(x, xMax)
+		yMax = math.max(y, yMax)
+	end
+	
+	return xMin, xMax, yMin, yMax
+end
+
+function Graph:initEdgeQ()
+	-- Get min and max of all vertices
+	local xMin, xMax, yMin, yMax = self:getExtent()
+
+	self.edgeQ = QuadTree(xMin, yMin, xMax, yMax)
+	
+	for i = 1, #self.edges, 2 do
+		self:addEdgeToQ(self.edges[i])
+	end
+end
+
+function Graph:addEdgeToQ(edge)
+	local x1, y1, x2, y2 = edge:getCoordinates()
+	self.edgeQ:insert(edge, x1, y1, x2, y2)
+end
+
+function Graph:initVertexQ()
+	-- Get min and max of all vertices
+	local xMin, xMax, yMin, yMax = self:getExtent()
+
+	self.vertexQ = QuadTree(xMin, yMin, xMax, yMax)
+	
+	for i, edge in ipairs(self.edges) do
+		self:addToVertexQ(edge)
+	end
+end
+
+function Graph:addToVertexQ(vertex)
+	local x, y = vertex:getCoordinates()
+	
+	--print(string.format("Adding vertex to Q, x=%d, y=%d, tolerance = %.1f", x, y, self.vertex_tolerance))
+	
+	self.vertexQ:insert(vertex, x - self.vertex_tolerance, y - self.vertex_tolerance, x + self.vertex_tolerance, y + self.vertex_tolerance)
+end
+
+function Graph:initFaceQ()
+	-- Get min and max of all vertices
+	local xMin, xMax, yMin, yMax = self:getExtent()
+
+	self.faceQ = QuadTree(xMin, yMin, xMax, yMax)
+	
+	for i, face in ipairs(self.faces) do
+		self:addToFaceQ(face)
+	end
+end
+
+function Graph:addToFaceQ(face)
+	local xMin, yMin, xMax, yMax = math.huge, math.huge, -math.huge, -math.huge
+	for i, edge in pairs(face.path) do
+		local x, y = edge.head:getCoordinates()
+		xMin = math.min(x, xMin)
+		yMin = math.min(y, yMin)
+		xMax = math.max(x, xMax)
+		yMax = math.max(y, yMax)
+	end
+	self.faceQ:insert(face, xMin, yMin, xMax, yMax)
 end
 
 function Graph:serialize()
@@ -260,7 +341,11 @@ end
 
 function Graph:addVertex(x, y)
 	local key = 1 + #self.vertices
+	
 	self.vertices[key] = Vertex(x, y, key)
+	
+	self:addToVertexQ(self.vertices[key])
+	
 	return self.vertices[key]
 end
 
@@ -294,6 +379,9 @@ function Graph:addEdgeAndTwin(head, tail)
 	
 	self.edges[new_edge_index] = new_edge
 	self.edges[new_twin_index] = new_twin
+	
+	-- Update qtree
+	self:addEdgeToQ(new_edge)
 	
 	return new_edge, new_twin
 end
@@ -369,8 +457,15 @@ end
 
 function Graph:checkPointVertices(x, y, tolerance)
 	tolerance = tolerance or self.vertex_tolerance
-	-- Quick and dirty
-	for i, vertex in ipairs(self.vertices) do
+	
+	local vertices = self.vertexQ:queryRect(x-tolerance, y-tolerance, x+tolerance, y+tolerance)
+	
+	self.vertices_queried = 0
+	self.vertices_considered = #vertices
+	
+	for i, vertex in ipairs(vertices) do
+		self.vertices_queried = self.vertices_queried + 1
+		
 		local dx, dy = vertex:getCoordinates()
 		dx, dy = math.abs(dx-x), math.abs(dy-y)
 		if dx < tolerance and dy < tolerance and dx*dx+dy*dy<tolerance*tolerance then
@@ -381,18 +476,33 @@ end
 
 function Graph:checkPointEdges(x, y, tolerance)
 	tolerance = tolerance or self.edge_tolerance
-	-- Quick and dirty
-	-- Only check odd edges (no need to check the twins)
-	local edges = self.edges
-	for i = 1, #edges, 2 do
-		local hit, t = edges[i]:hitTest(x, y, tolerance)
+	
+	local edges = self.edgeQ:queryRect(x-tolerance, y-tolerance, x+tolerance, y+tolerance)
+	
+	self.edges_queried = 0
+	self.edges_considered = #edges
+	
+	for i, edge in ipairs(edges) do
+		self.edges_queried = self.edges_queried + 1
+		local hit, t = edge:hitTest(x, y, tolerance)
 		if hit then
-			return edges[i], t
+			return edge, t
 		end
 	end
 end
 
 function Graph:checkPointFaces(x, y)
+	local faces = self.faceQ:queryPoint(x, y)
+	
+	self.faces_queried = 0
+	self.faces_considered = #faces
+	
+	for i, face in ipairs(faces) do
+		self.faces_queried = self.faces_queried + 1
+		if face:containsPoint(x, y) then
+			return face
+		end
+	end
 end
 
 function Graph:checkPoint(x, y)
@@ -403,6 +513,10 @@ function Graph:checkPoint(x, y)
 	local edge, t = self:checkPointEdges(x, y)
 	if edge then
 		return "edge", edge, t
+	end
+	local face = self:checkPointFaces(x, y)
+	if face then
+		return "face", face
 	end
 end
 

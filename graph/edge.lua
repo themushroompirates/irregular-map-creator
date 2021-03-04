@@ -41,7 +41,13 @@ function Edge:hitTest(x, y, tolerance)
 	
 	local x1, y1, x2, y2 = self:getCoordinates()
 	
-	return point_vs_segment(x, y, x1, y1, x2, y2, tolerance)
+	local hit, t = point_vs_segment(x, y, x1, y1, x2, y2, tolerance)
+	
+	if hit and t > 0 and t < 1 then
+		return hit, t
+	end
+	
+	return false
 end
 
 function Edge:checkSegment(x1, y1, x2, y2, tolerance)
