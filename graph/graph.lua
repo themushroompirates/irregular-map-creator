@@ -1,4 +1,12 @@
 local class = require "util.30log"
+local serpent = require "util.serpent"
+
+local geometry2d = require "util.geometry2d"
+local angle = geometry2d.angle
+
+local Vertex = require "graph.vertex"
+local Edge = require "graph.edge"
+local Face = require "graph.face"
 
 local MAX_SANITY = 999
 
@@ -11,69 +19,6 @@ local Graph = class("Graph", {
 	vertex_tolerance = 5,
 	edge_tolerance = 3
 })
-
-local Vertex = class("Vertex", {})
-
-function Vertex:init(x, y, key)
-	self.x = x
-	self.y = y
-	self.key = key
-end
-
-function Vertex:getCoordinates()
-	return self.x, self.y
-end
-
-function Vertex:__tostring()
-	return string.format("Vertex(%d)", self.key)
-end
-
-local Edge = class("Edge", {})
-
-function Edge:init(head, tail, key)
-	assert(head ~= tail)
-	self.head = head
-	self.tail = tail
-	self.key = key
-end
-
-function Edge:getCoordinates()
-	local x1, y1 = self.head:getCoordinates()
-	local x2, y2 = self.tail:getCoordinates()
-	return x1, y1, x2, y2
-end
-
-function Edge:hitTest(x, y, tolerance)
-	local x1, y1, x2, y2 = self:getCoordinates()
-	local xMin, yMin = math.min(x1, x2), math.min(y1, y2)
-	local xMax, yMax = x1+x2-xMin, y1+y2-yMin
-	if x < xMin - tolerance or y < yMin - tolerance then return false end
-	if x > xMax + tolerance or y > yMax + tolerance then return false end
-	
-	local dx, dy = x2 - x1, y2 - y1
-	local length = math.sqrt(dx*dx+dy*dy)
-	
-	-- We shouldn't allow edges with nonzero lengths
-	assert(length > 0)
-	
-	-- Get the perpendicular normal vector to the edge
-	dx, dy = -dy / length, dx / length
-	
-	-- Dot that with the vector from the head to the coords provided
-	local dot = (x - x1)*dx + (y-y1)*dy
-	
-	if math.abs(dot) > tolerance then return false end
-	
-	local t = math.max(0, math.min(1, ((x-x1)*(x2-x1)+(y-y1)*(y2-y1))/(length*length)))
-	
-	return true, t
-end
-
-function Edge:__tostring()
-	return string.format("Edge(%d-%d)", self.head.key, self.tail.key)
-end
-
---
 
 local function add_link(links, head, tail)
 	if links[head] == nil then
@@ -93,8 +38,7 @@ function Graph:init(vertices, edges)
 	local linked = {}
 	
 	for i, edge in ipairs(edges) do
-		--local head, tail = unpack(edge)
-		local head, tail = edge.head, edge.tail
+		local head, tail = unpack(edge)
 		
 		add_link(linked, head, tail)
 		add_link(linked, tail, head)
@@ -105,18 +49,31 @@ function Graph:init(vertices, edges)
 		self.edges[edge_key] = Edge(self.vertices[head], self.vertices[tail], edge_key)
 		self.edges[twin_key] = Edge(self.vertices[tail], self.vertices[head], twin_key)
 	end
+	
+	self:recalculate()
 end
 
-local function angle(x1, y1, x2, y2, x3, y3)
-	x1, y1 = x1 - x2, y1 - y2
-	x3, y3 = x3 - x2, y3 - y2
-	local dot = x1*x3 + y1*y3
-	local det = x1*y3 - y1*x3
-	local result = math.atan2(det, dot)
-	if result < 0 then
-		return math.deg(result) + 360
-	else
-		return math.deg(result)
+function Graph:serialize()
+	local points = {}
+	local segs = {}
+	
+	for i, vertex in ipairs(self.vertices) do
+		table.insert(points, { x = vertex.x, y = vertex.y })
+	end
+	
+	for i = 1, #self.edges, 2 do
+		local edge = self.edges[i]
+		table.insert(segs, { edge.head.key, edge.tail.key })
+	end
+	
+	-- Just for kicks...
+	return serpent.dump({vertices=points,edges=segs})
+end
+
+function Graph:unserialize(chonk)
+	local ok, data = serpent.load(chonk)
+	if ok then
+		self:init(data.vertices, data.edges)
 	end
 end
 
@@ -145,9 +102,15 @@ function Graph:findNextEdge(edge1)
 end
 
 function Graph:followEdges()
-	local visited = {}
-	
+
 	local edges = self.edges
+
+	-- Clear existing 'next' pointers
+	for i, edge in ipairs(edges) do
+		edge.next = nil
+	end
+	
+	local visited = {}
 	
 	for i, edge in ipairs(edges) do
 		if not visited[i] then
@@ -176,6 +139,17 @@ function Graph:followEdges()
 			end
 		end
 	end
+	
+	self:backlinkEdges()
+end
+
+function Graph:backlinkEdges()
+	local edges = self.edges
+	for i, edge in ipairs(edges) do
+		local next_edge = edge.next
+		assert(next_edge)
+		next_edge.prev = edge
+	end
 end
 
 function Graph:createFaces()
@@ -203,7 +177,8 @@ function Graph:createFaces()
 			until current_edge == edge
 			
 			if signedArea > 0 then
-				local face = { path = path, key = 1 + #faces }
+				local face = Face(1 + #faces, path)
+				--local face = { path = path, key = 1 + #faces }
 				table.insert(faces, face)
 				for _, tmp_edge in ipairs(path) do
 					tmp_edge.face = face
@@ -214,9 +189,182 @@ function Graph:createFaces()
 	
 end
 
+function Graph:debugEdges()
+	print("---- EDGES ----")
+	print("Edge\tPrev\tNext")
+	print("----\t----\t----")
+	for i, edge in ipairs(self.edges) do
+		print(tostring(edge) .. "\t" .. tostring(edge.prev) .. "\t" .. tostring(edge.next))
+	end
+	print("---------------")
+end
+
+function Graph:debugFaces()
+	print("----- Faces -----")
+	for i, face in ipairs(self.faces) do
+		local text = tostring(face)
+		local path = {}
+		if #face.path > 0 then
+			assert(#face.path > 1)
+			
+			local follow
+			
+			if face.path[1].tail == face.path[2].head then
+				follow = "tail"
+				table.insert(path, string.format("v%d", face.path[1].head.key))
+			elseif face.path[1].head == face.path[2].tail then
+				follow = "head"
+				table.insert(path, string.format("v%d", face.path[1].tail.key))
+			else
+				assert(false)
+			end
+			
+			for j, edge in ipairs(face.path) do
+				table.insert(path, string.format("v%d", edge[follow].key))
+				
+			end
+		end
+		print(tostring(face) .. ":\t" .. table.concat(path, " -> "))
+	end
+end
+
+function Graph:debugPaths()
+	print("----- Paths -----")
+	local visited = {}
+	for i, head in ipairs(self.edges) do
+		if not visited[head] then
+			
+			local next_edge = head
+			local path = {}
+			
+			table.insert(path, string.format("v%d", head.head.key))
+				
+			repeat
+				visited[next_edge] = true
+				table.insert(path, string.format("v%d", next_edge.tail.key))
+				next_edge = next_edge.next
+			until next_edge == nil or next_edge == head
+			
+			print(table.concat(path, " -> "))
+		end
+	end
+end
+
 function Graph:recalculate()
 	self:followEdges()
 	self:createFaces()
+	
+	--self:debugFaces()
+	--self:debugPaths()
+end
+
+function Graph:addVertex(x, y)
+	local key = 1 + #self.vertices
+	self.vertices[key] = Vertex(x, y, key)
+	return self.vertices[key]
+end
+
+function Graph:getEdgeTwin(edge)
+	local index = edge.key
+	
+	--[[
+	-- We want this to happen:
+	if index % 2 == 1 then
+		return self.edges[index + 1]
+	else
+		return self.edges[index - 1]
+	end
+	
+	consider the quantity q = ( 2 * (index % 2) - 1 )
+	(index % 2) == 1   =>   q =  1
+	(index % 2) == 0   =>   q = -1
+	
+	--]]
+	
+	return self.edges[ index + 2 * (index % 2) - 1 ]
+	
+end
+
+function Graph:addEdgeAndTwin(head, tail)
+	local new_edge_index = 1 + #self.edges
+	local new_twin_index = 2 + #self.edges
+	
+	local new_edge = Edge(head, tail, new_edge_index)
+	local new_twin = Edge(tail, head, new_twin_index)
+	
+	self.edges[new_edge_index] = new_edge
+	self.edges[new_twin_index] = new_twin
+	
+	return new_edge, new_twin
+end
+
+function Graph:splitEdge(edge, t)
+	local x, y = edge:getCoordinatesOfPoint(t)
+	local twin = self:getEdgeTwin(edge)
+	
+	local new_vertex = self:addVertex(x, y)
+	
+	local new_edge, new_twin = self:addEdgeAndTwin(new_vertex, edge.tail)
+
+	-- Set the faces
+	new_edge.face = edge.face
+	new_twin.face = twin.face
+	
+	-- Update the split edge to point to the new vertex
+	edge.tail = new_vertex
+	twin.head = new_vertex
+	
+	-- Update edge pointers
+	-- WAS : (edge.prev) => (edge) => (edge.next)
+	-- NOW : (edge.prev) => (edge) => (new)       => (edge.next)
+	new_edge.next = edge.next
+	new_edge.prev = edge
+	
+	edge.next.prev = new_edge
+	edge.next = new_edge
+	
+	-- Update twin pointers
+	-- WAS : (twin.prev) => (twin) => (twin.next)
+	-- NOW : (twin.prev) => (new)  => (twin)      => (twin.next)
+	twin.prev.next = new_twin
+	new_twin.next = twin
+	twin.next.prev = twin
+	new_twin.prev = twin.prev
+	twin.prev = new_twin
+	
+	-- Need to update the faces' paths
+	if edge.face then
+		local path = edge.face.path
+		-- The new edge gets added AFTER the current edge
+		for i = 1, #path do
+			if path[i] == edge then
+				table.insert(path, i+1, new_edge)
+				break
+			end
+		end
+	end
+	if twin.face then
+		--assert(twin.face ~= edge.face)
+		local path = twin.face.path
+		-- The new twin gets added BEFORE the current twin
+		for i = 1, #path do
+			if path[i] == twin then
+				table.insert(path, i, new_twin)
+				break
+			end
+		end
+	end
+	
+	return new_vertex
+end
+
+function Graph:getEdgeForVertices(head, tail)
+	local edges = self.edges
+	for i, edge in ipairs(edges) do
+		if edge.head == head and edge.tail == tail then
+			return edge
+		end
+	end
 end
 
 function Graph:checkPointVertices(x, y, tolerance)
@@ -259,7 +407,20 @@ function Graph:checkPoint(x, y)
 end
 
 function Graph:checkSegment(x1, y1, x2, y2)
-
+	-- Keep it simple for now
+	local collisions = {}
+	
+	for i = 1, #self.edges, 2 do
+		local edge = self.edges[i]
+		local collide, tEdge, tSegment = edge:checkSegment(x1, y1, x2, y2)
+		if collide then
+			table.insert(collisions, { t = tSegment, edge = edge, tEdge = tEdge })
+		end
+	end
+	
+	table.sort(collisions, function(one, two) return one.t < two.t end)
+	
+	return collisions
 end
 
 return Graph
