@@ -270,6 +270,30 @@ function Graph:createFaces()
 	
 end
 
+function Graph:findFaceNeighbours()
+	for i, face in ipairs(self.faces) do
+		local neighbourLUT = {}
+		for j, edge in ipairs(self.edges) do
+			local twin = self:getEdgeTwin(edge)
+			
+			if edge.face == face then
+				if twin.face then
+					neighbourLUT[twin.face] = true
+				end
+			elseif twin.face == face then
+				if edge.face then
+					neighbourLUT[edge.face] = true
+				end
+			end
+		end
+		local neighbours = {}
+		for k, _ in pairs(neighbourLUT) do
+			table.insert(neighbours, k)
+		end
+		face.neighbours = neighbours
+	end
+end
+
 function Graph:debugEdges()
 	print("---- EDGES ----")
 	print("Edge\tPrev\tNext")
@@ -334,6 +358,7 @@ end
 function Graph:recalculate()
 	self:followEdges()
 	self:createFaces()
+	self:findFaceNeighbours()
 	
 	--self:debugFaces()
 	--self:debugPaths()

@@ -42,7 +42,7 @@ function love.load()
 end
 
 -- Camera handled
-function draw_face(face)
+function draw_face(face, opacity)
 	assert(face and face.path and #face.path > 1)
 	local coords = {}
 	
@@ -61,7 +61,7 @@ function draw_face(face)
 	end
 	
 	local colour = face_colours[face.key]
-	love.graphics.setColor(colour[1], colour[2], colour[3], 0.75)
+	love.graphics.setColor(colour[1], colour[2], colour[3], opacity or 1.0)
 	for i, triangle in ipairs(triangles) do
 		love.graphics.polygon("fill", triangle)
 	end
@@ -171,6 +171,9 @@ function draw_selection()
 	
 	if foo == "face" then
 		draw_face(bar)
+		for i, face in ipairs(bar.neighbours) do
+			draw_face(face, .5)
+		end
 	end
 	
 	local target_x, target_y
